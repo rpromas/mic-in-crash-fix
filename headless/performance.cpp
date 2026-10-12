@@ -630,7 +630,7 @@ void ReportGpuThread(unsigned frame) {
                     worker_execute.calls.load(std::memory_order_relaxed),
                     worker_execute.nanoseconds.load(std::memory_order_relaxed));
         char line[900];
-#ifdef PS5_NATIVE
+#if defined(PS5_NATIVE) && defined(EDEN_DEV_PROFILE)
         const auto text = reinterpret_cast<std::uintptr_t>(__eden_text_start);
 #else
         const std::uintptr_t text = 0;
