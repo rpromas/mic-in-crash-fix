@@ -18,6 +18,15 @@
 // Keep CPU heaps/tables and JIT views out of RADV's high-word-2 GPU window.
 // This is a non-fixed hint: the kernel retains ownership of collision handling.
 constexpr std::uintptr_t cpu_mapping_hint = 0x1000000000ull;
+// Where the guest's own memory is mapped: above every address a guest can have (2^39, the end of
+// the 39-bit address space of a 64-bit title). A guest page table entry is the page's host
+// address less its guest address, and zero means "no pointer" (common/page_table.h). At the
+// general hint the guest's memory sat at 67 to 71 GiB, inside the guest's address space: a game
+// that mapped 2 MiB there at the matching offset got 512 entries of zero ("memory mapping base
+// yield a nullptr within the table"), read zeros from that memory, jumped to address 0 and was
+// restarted as a guest fault. A hint, as the other is: where the system places the block instead
+// is reported (EDEN_GUEST_MEMORY).
+constexpr std::uintptr_t guest_memory_hint = 0x8000000000ull;
 static bool cpu_mapping_address(void* base) {
     return reinterpret_cast<std::uintptr_t>(base) >= 0x300000000ull && base != MAP_FAILED;
 }
@@ -118,7 +127,8 @@ void MemorySteps(unsigned long long* count, unsigned long long* nanoseconds) noe
     *nanoseconds = memory_step_ns.load(std::memory_order_relaxed);
 }
 
-void* AllocateMemoryPages(std::size_t size) noexcept {
+namespace {
+void* AllocatePagesAt(std::size_t size, [[maybe_unused]] std::uintptr_t hint) noexcept {
     const MemoryStep step;
     const long page = sysconf(_SC_PAGESIZE);
     const std::size_t lead = page > 0 ? lead_size(size, static_cast<std::size_t>(page)) : 0;
@@ -127,7 +137,7 @@ void* AllocateMemoryPages(std::size_t size) noexcept {
     void* base = nullptr;
     std::int64_t physical = -1;
 #ifdef PS5_NATIVE
-    base = reinterpret_cast<void*>(cpu_mapping_hint);
+    base = reinterpret_cast<void*>(hint);
     const auto limit = sceKernelGetDirectMemorySize();
     auto rc = sceKernelAllocateDirectMemory(0, limit, total, lead, 12, &physical);
     if (rc != 0) {
@@ -159,6 +169,30 @@ void* AllocateMemoryPages(std::size_t size) noexcept {
     auto* data = static_cast<std::uint8_t*>(base) + lead;
     new (data - page) Header{physical, total, lead};
     return data;
+}
+} // namespace
+
+void* AllocateMemoryPages(std::size_t size) noexcept {
+#ifdef PS5_NATIVE
+    return AllocatePagesAt(size, cpu_mapping_hint);
+#else
+    return AllocatePagesAt(size, 0);
+#endif
+}
+
+// The guest's memory (host_memory.cpp): as AllocateMemoryPages, above the guest's address space.
+void* AllocateGuestMemory(std::size_t size) noexcept {
+#ifdef PS5_NATIVE
+    void* base = AllocatePagesAt(size, guest_memory_hint);
+    if (!base) base = AllocatePagesAt(size, cpu_mapping_hint);
+    char line[112];
+    const int length = std::snprintf(line, sizeof(line), "EDEN_GUEST_MEMORY va=%p bytes=%zu above_guest=%d\n", base, size,
+                                     int(reinterpret_cast<std::uintptr_t>(base) >= guest_memory_hint));
+    if (length > 0) Report(line);
+    return base;
+#else
+    return AllocatePagesAt(size, 0);
+#endif
 }
 
 #ifdef PS5_NATIVE
