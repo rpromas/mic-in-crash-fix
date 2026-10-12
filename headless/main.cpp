@@ -57,6 +57,7 @@
 #include "stall_watchdog.h"
 #include "dev_vulkan.h"
 #include "../src/fastmem.h"
+#include "image_pages.h"
 #include "crash_report.h"
 #include "prosperoeden/frontend.h"
 #include "prosperoeden/version.h"
@@ -820,6 +821,9 @@ int main(int argc, char** argv) {
                             static_cast<unsigned>(ms * 1000);
                 } else if (entry == "gpu_delay_after=on") {
                     Eden::Performance::gpu_delay_after = true;
+                } else if (entry == "read_shortcut=off") {
+                    // Every guest read of tracked memory asks the texture cache (headless/image_pages.h).
+                    Eden::ImagePages::shortcut = false;
                 } else if (entry == "timers=off") {
                     // The timers the development reports read are off, as in a release build:
                     // the frame rate and pacing lines stay (EDEN_VULKAN_FRAME, _INTERVALS).

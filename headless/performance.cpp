@@ -2,6 +2,7 @@
 #include "performance.h"
 #include "crash_report.h"
 #include "stall_watchdog.h"
+#include "image_pages.h"
 #include "../src/fastmem.h"
 #include "common/cpu_features.h"
 #include "common/sparse_large_vector.h"
@@ -643,6 +644,9 @@ void ReportGpuThread(unsigned frame) {
                             gpu_delay_step_us.load(std::memory_order_relaxed) *
                                 (frames_shown.load(std::memory_order_relaxed) / 600),
                         static_cast<int>(gpu_delay_after.load(std::memory_order_relaxed)));
+        std::printf("EDEN_DEV_READS short=%llu asked=%llu\n",
+                    ::Eden::ImagePages::reads_short.load(std::memory_order_relaxed),
+                    ::Eden::ImagePages::reads_asked.load(std::memory_order_relaxed));
         std::printf("EDEN_DEV_WORKER execute_calls=%llu execute_ns=%llu\n",
                     worker_execute.calls.load(std::memory_order_relaxed),
                     worker_execute.nanoseconds.load(std::memory_order_relaxed));

@@ -79,7 +79,20 @@ void RasterizerVulkan::DispatchCompute() {"""),
     ('bool RasterizerVulkan::OnCPUWrite(DAddr addr, u64 size) {',
      'bool RasterizerVulkan::OnCPUWrite(DAddr addr, u64 size) {\n    ::Eden::Performance::Timer guest_write_timer(::Eden::Performance::guest_cpu_write);'),
     ('VideoCore::RasterizerDownloadArea RasterizerVulkan::GetFlushArea(DAddr addr, u64 size) {',
-     'VideoCore::RasterizerDownloadArea RasterizerVulkan::GetFlushArea(DAddr addr, u64 size) {\n    ::Eden::Performance::Timer guest_read_timer(::Eden::Performance::guest_cpu_read);'),
+     'VideoCore::RasterizerDownloadArea RasterizerVulkan::GetFlushArea(DAddr addr, u64 size) {\n    ::Eden::Performance::Timer guest_read_timer(::Eden::Performance::guest_cpu_read);\n'
+     # A read of memory no image was ever registered in: the texture cache would find none and
+     # change nothing, so its lock (held by the GPU thread through every draw) is not taken
+     # (headless/image_pages.h).
+     '    const bool count_reads = ::Eden::Performance::timers_on.load(std::memory_order_relaxed);\n'
+     '    if (::Eden::ImagePages::shortcut.load(std::memory_order_relaxed) && ::Eden::ImagePages::NeverHeld(addr, size)) {\n'
+     '        if (count_reads) ::Eden::ImagePages::reads_short.fetch_add(1, std::memory_order_relaxed);\n'
+     '        return VideoCore::RasterizerDownloadArea{\n'
+     '            .start_address = Common::AlignDown(addr, Core::DEVICE_PAGESIZE),\n'
+     '            .end_address = Common::AlignUp(addr + size, Core::DEVICE_PAGESIZE),\n'
+     '            .preemtive = true,\n'
+     '        };\n'
+     '    }\n'
+     '    if (count_reads) ::Eden::ImagePages::reads_asked.fetch_add(1, std::memory_order_relaxed);'),
     # ... and wait for those locks spinning briefly before sleeping (performance.h GuestCacheLock).
     ('        std::scoped_lock lock{texture_cache.mutex};\n        auto area = texture_cache.GetFlushArea(addr, size);',
      '        ::Eden::Performance::GuestCacheLock(texture_cache.mutex);\n'
@@ -192,7 +205,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {'''),
     # Development GPU fault probe (dev_vulkan.h, pipeline_trace=on): once the runner
     # creates /app0/sync-draws.txt, report every draw/dispatch to klog and wait for the
     # GPU, so the last report before a fatal GPU fault names the operation.
-    ('#include "performance.h"', '#include "performance.h"\n#include "dev_vulkan.h"\n#include "diagnostics.h"\n#include <filesystem>'),
+    ('#include "performance.h"', '#include "performance.h"\n#include "dev_vulkan.h"\n#include "diagnostics.h"\n#include "image_pages.h"\n#include <filesystem>'),
     ('GraphicsPipeline* prepared_pipeline = nullptr;',
      'GraphicsPipeline* prepared_pipeline = nullptr;\n'
      '// The pipeline of the last prepared draw, for the development fault probe.\n'
@@ -924,7 +937,15 @@ for signature, index in (
     texture_costs.append((anchor, anchor + scope))
 adapt('src/video_core/texture_cache/texture_cache.h',
       'vulkan-cache/video_core/texture_cache/texture_cache.h', [
-    ('namespace VideoCommon {', '#include "performance.h"\n#include "common/scope_exit.h"\nnamespace Vulkan { class TextureCacheRuntime; }\n\nnamespace VideoCommon {'),
+    ('namespace VideoCommon {', '#include "performance.h"\n#include "image_pages.h"\n#include "common/scope_exit.h"\nnamespace Vulkan { class TextureCacheRuntime; }\n\nnamespace VideoCommon {'),
+    # Every place an image is registered at is marked before the texture cache can find the
+    # image there (headless/image_pages.h): the two inserts below are the only ones.
+    ('        auto map_id =\n            slot_map_views.insert(image.gpu_addr, image.cpu_addr, image.guest_size_bytes, image_id);',
+     '        ::Eden::ImagePages::Mark(image.cpu_addr, image.guest_size_bytes);\n'
+     '        auto map_id =\n            slot_map_views.insert(image.gpu_addr, image.cpu_addr, image.guest_size_bytes, image_id);'),
+    ('            auto map_id = slot_map_views.insert(gpu_addr, cpu_addr, size, image_id);',
+     '            ::Eden::ImagePages::Mark(cpu_addr, size);\n'
+     '            auto map_id = slot_map_views.insert(gpu_addr, cpu_addr, size, image_id);'),
     (download_prefix, download_prefix + (port / 'vulkan_download_batch.inc').read_text() + '\n'),
     (gc_original, gc),
     # RADV reports all Vulkan allocations, not just cached textures. A game's
