@@ -697,7 +697,8 @@ for call in ('vmaCreateImage(allocator, &ci, &alloc_ci, &handle, &allocation, &a
         '        const auto times = ::Eden::Performance::outside_budget.fetch_add(1, std::memory_order_relaxed) + 1;\n'
         '        if ((times & (times - 1)) == 0)  // the 1st, 2nd, 4th, 8th ... time\n'
         '            std::fprintf(stderr, "[ProsperoEden] graphics memory: the allocator\'s budget refused %llu requests; "\n'
-        '                         "asked again outside it (result %d)\\n", static_cast<unsigned long long>(times), int(created));\n'
+        '                         "asked again outside it (result %d): DETAIL\\n", static_cast<unsigned long long>(times), int(created),\n'
+        '                         VALUES);\n'
         '    }\n'
         '    vk::Check(created);\n'
         '    if (alloc_info.size >= (VkDeviceSize{128} << 20))  // development: what the large ones are\n'
@@ -844,10 +845,16 @@ for signature, index in (
             // What holds the graphics memory: the cache's images (the scaled copies apart) and
             // the allocator's heaps (performance.h, eden_report_vma).
             unsigned long long images = 0, bytes = 0, scaled_images = 0, scaled_bytes = 0, written = 0;
+            unsigned long long astc_images = 0, astc_bytes = 0;  // as they are held (RGBA8, or BC1/BC3)
             lru_cache.ForEachItemBelow(u64{0x7fffffffffffffff}, [&](ImageId id) {  // every image
                 const auto& image = slot_images[id];
                 ++images;
                 bytes += (std::max)(image.guest_size_bytes, image.unswizzled_size_bytes);
+                if (IsPixelFormatASTC(image.info.format)) {
+                    ++astc_images;
+                    astc_bytes += TranscodedAstcSize(
+                        (std::max)(image.guest_size_bytes, image.unswizzled_size_bytes), image.info.format);
+                }
                 if (image.HasScaled()) {
                     ++scaled_images;
                     scaled_bytes += GetScaledImageSizeBytes(image);
@@ -856,8 +863,9 @@ for signature, index in (
                 return false;
             });
             std::printf("EDEN_VULKAN_TEXTURES frame=%llu images=%llu bytes=%llu scaled_images=%llu scaled_bytes=%llu "
-                        "gpu_written=%llu\\n", static_cast<unsigned long long>(frame_tick), images, bytes,
-                        scaled_images, scaled_bytes, written);
+                        "gpu_written=%llu astc_images=%llu astc_bytes=%llu\\n",
+                        static_cast<unsigned long long>(frame_tick), images, bytes, scaled_images, scaled_bytes,
+                        written, astc_images, astc_bytes);
             eden_report_vma();
             std::printf("EDEN_VULKAN_TEXTURE_BUDGET frame=%llu usage=%llu expected=%llu critical=%llu "
                         "keep_dirty=%d memory_short=%d\\n",

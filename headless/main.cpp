@@ -851,6 +851,15 @@ int main(int argc, char** argv) {
                     Eden::DevVulkan::sync_submissions = true;
                 } else if (entry == "astc=cpu") {
                     Settings::values.accelerate_astc.SetValue(Settings::AstcDecodeMode::Cpu);
+                } else if (entry == "astc=async") {
+                    // Decoded on other threads: a texture shows a frame or two late instead of
+                    // holding the frame it is first used in.
+                    Settings::values.accelerate_astc.SetValue(Settings::AstcDecodeMode::CpuAsynchronous);
+                } else if (entry == "astc_recompress=bc1" || entry == "astc_recompress=bc3") {
+                    // ASTC textures (the console's GPU has no ASTC) kept as BC1 or BC3 instead of
+                    // RGBA8: an eighth or a quarter of the graphics memory, for decoding on the CPU.
+                    Settings::values.astc_recompression.SetValue(entry.ends_with('1')
+                        ? Settings::AstcRecompression::Bc1 : Settings::AstcRecompression::Bc3);
                 } else if (entry == "log=render") {
                     // Renderer debug logging for crash probes (fetched every few seconds).
                     Common::Log::Filter filter;
