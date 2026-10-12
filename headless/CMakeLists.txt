@@ -33,6 +33,22 @@ function(write_derived path content)
     file(WRITE "${path}.in" "${content}")
     configure_file("${path}.in" "${path}" COPYONLY)
 endfunction()
+# Eden's helper that hands a small vector on (FixSmallVectorADL, texture_cache/util.h) has two
+# forms: the vector itself, or - for a GCC 12 bug with an old Boost - a copy of it on the heap.
+# Boost's version chooses, and the header reads it without including <boost/version.hpp>: where
+# nothing else has, the version reads as 0 and the copy is made. That was every draw that follows
+# a guest write of GPU memory, every texture upload and every buffer copy: 2,300 of the GPU
+# thread's 3,400 allocations a frame in a large open-world game. With the include, the vector
+# itself (the bundled Boost is recent).
+file(READ "${PROJECT_SOURCE_DIR}/src/video_core/texture_cache/util.h" texture_util_header)
+string(REPLACE "#include <boost/container/small_vector.hpp>"
+    "#include <boost/container/small_vector.hpp>\n#include <boost/version.hpp>"
+    texture_util_derived "${texture_util_header}")
+if(texture_util_derived STREQUAL texture_util_header OR NOT texture_util_header MATCHES "FixSmallVectorADL")
+    message(FATAL_ERROR "Pinned texture cache util.h layout changed")
+endif()
+write_derived("${PORT_BUILD_DIR}/small-vector/video_core/texture_cache/util.h" "${texture_util_derived}")
+target_include_directories(video_core BEFORE PRIVATE "${PORT_BUILD_DIR}/small-vector")
 set(MULTIPLAYER_SOURCE "${PROJECT_SOURCE_DIR}")
 set(MULTIPLAYER_OUTPUT "${PORT_BUILD_DIR}/multiplayer")
 include("${EDEN_PORT_DIR}/multiplayer_packets.cmake")
