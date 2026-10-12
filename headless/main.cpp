@@ -800,6 +800,10 @@ int main(int argc, char** argv) {
                     Eden::Performance::frame_trace = true;
                 } else if (entry == "pipeline=on") {
                     Eden::Performance::pipelined_frames = true;
+                } else if (entry == "timers=off") {
+                    // The timers the development reports read are off, as in a release build:
+                    // the frame rate and pacing lines stay (EDEN_VULKAN_FRAME, _INTERVALS).
+                    Eden::Performance::timers_on = false;
                 } else if (entry == "marks=off") {
                     // A run at the speed of a release build: a draw's phase marks and the timing
                     // of guest thread waits cost about 3 ms a frame in a large game.
