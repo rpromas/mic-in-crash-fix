@@ -947,13 +947,15 @@ int main(int argc, char** argv) {
 #ifdef EDEN_DEV_PROFILE
             {
                 // One run at another resolution or without frame generation, over the settings:
-                // dev-settings resolution=1x|2x, framegen=off|on.
+                // dev-settings resolution=1x|2x, framegen=off|on, filter=bilinear|fsr.
                 std::ifstream dev_video(Eden::AppFile("dev-settings.txt"));
                 for (std::string entry; dev_video >> entry;) {
                     if (entry == "resolution=1x") video.resolution = 2;
                     else if (entry == "resolution=2x") video.resolution = 4;
                     else if (entry == "framegen=off") video.frame_gen = false;
                     else if (entry == "framegen=on") video.frame_gen = true;
+                    else if (entry == "filter=bilinear") video.upscaling_filter = 0;
+                    else if (entry == "filter=fsr") video.upscaling_filter = 1;
                 }
             }
 #endif
