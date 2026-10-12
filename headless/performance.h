@@ -455,6 +455,12 @@ private:
 // (WaitBegin, WaitEnd, NoteRunnable) are counted under the same flag: their hooks sit under
 // the scheduler lock (headless/CMakeLists.txt, k_thread.cpp).
 inline std::atomic<bool> dev_marks{false};
+// The game makes its next frame while the GPU thread still works on the last one (CMakeLists.txt,
+// the display's composer). composite_pending: the GPU thread has not yet shown the frame it was
+// last given, as the composer found it at this vsync. dev-settings pipeline=off: as Eden has it,
+// the vsync waits.
+inline std::atomic<bool> pipelined_frames{true};
+inline std::atomic<bool> composite_pending{false};
 inline long long MarkStart() { return dev_marks.load(std::memory_order_relaxed) ? NowNs() : 0; }
 inline void Mark(Totals& totals, long long& since) {
     if (!dev_marks.load(std::memory_order_relaxed)) return;

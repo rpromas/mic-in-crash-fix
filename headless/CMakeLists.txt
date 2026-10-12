@@ -803,6 +803,22 @@ string(REPLACE "${prefetch_old}"
     physical_core_source "${physical_core_source}")
 write_derived("${PORT_BUILD_DIR}/physical_core.cpp"
     "#include \"${EDEN_PORT_DIR}/guest_fault.h\"\n#include \"${EDEN_PORT_DIR}/performance.h\"\n#include \"core/arm/debug.h\"\n${physical_core_source}")
+# The composer's side of the frames in a row (the GPU's side is with gpu.cpp below): while the
+# GPU thread has not shown the frame it was given, no new frame is taken from the game.
+file(READ "${PROJECT_SOURCE_DIR}/src/core/hle/service/nvnflinger/hardware_composer.cpp" composer_source)
+set(composer_wait_old "    nvdisp.WaitForComposite();\n    this->ReleaseFramebuffersLocked(display);")
+set(composer_acquire_old "        bool should_try_acquire = true;")
+foreach(pinned IN ITEMS composer_wait_old composer_acquire_old)
+    string(FIND "${composer_source}" "${${pinned}}" pinned_at)
+    if(pinned_at LESS 0)
+        message(FATAL_ERROR "Pinned display composer changed (${pinned})")
+    endif()
+endforeach()
+string(REPLACE "${composer_wait_old}" "    nvdisp.WaitForComposite();\n    const bool composite_pending = ::Eden::Performance::composite_pending.load(std::memory_order_relaxed);\n    this->ReleaseFramebuffersLocked(display);" composer_source "${composer_source}")
+string(REPLACE "${composer_acquire_old}" "        bool should_try_acquire = !composite_pending;" composer_source "${composer_source}")
+write_derived("${PORT_BUILD_DIR}/hardware_composer.cpp" "#include \"${EDEN_PORT_DIR}/performance.h\"\n${composer_source}")
+list(REMOVE_ITEM core_sources "hle/service/nvnflinger/hardware_composer.cpp")
+list(APPEND core_sources "${PORT_BUILD_DIR}/hardware_composer.cpp")
 list(REMOVE_ITEM core_sources "hle/kernel/physical_core.cpp")
 list(APPEND core_sources "${PORT_BUILD_DIR}/physical_core.cpp")
 if(EDEN_DEV_PROFILE)
@@ -2103,6 +2119,40 @@ if(EDEN_PS5_OPENGL)
             gpu_source "${gpu_source}")
     endif()
 endif()
+# Eden's display composer waits at every vsync until the GPU thread has shown the frame it was
+# given the vsync before, and only then gives the game a picture buffer back. The game hands a
+# frame over in one or two pushes at its end, so the GPU thread starts on a frame when the game
+# has finished making it: with the wait, the game could not begin the next frame until the GPU
+# thread was through with this one, and a frame took the two times added up. A large open-world
+# game: 20 ms to make a frame and 27 ms of GPU thread work for it, so 50 ms a frame (three
+# refreshes of 60 Hz) at any resolution, with both sides idle half the time. Here the vsync does
+# not wait: it notes whether that frame is done (composite_pending), buffers go back to the game
+# on time, and the composer takes the next frame only when the last is done (below). The game is
+# at most one frame ahead, and the GPU thread's queue keeps every frame's work in order.
+set(wait_composite_old "    void WaitForComposite() {\n        const u64 fence = pending_composite_fence;\n        if (fence == 0) {\n            return;\n        }\n        pending_composite_fence = 0;\n        if (shutting_down.load(std::memory_order_relaxed)) {\n            return;\n        }\n        WaitForSyncOperation(fence);\n    }")
+string(FIND "${gpu_source}" "${wait_composite_old}" wait_composite_at)
+if(wait_composite_at LESS 0)
+    message(FATAL_ERROR "Pinned GPU composite wait changed")
+endif()
+string(REPLACE "${wait_composite_old}" [=[    void WaitForComposite() {
+        auto& pending = ::Eden::Performance::composite_pending;
+        const u64 fence = pending_composite_fence;
+        if (fence == 0 || shutting_down.load(std::memory_order_relaxed)) {
+            pending_composite_fence = 0;
+            pending.store(false, std::memory_order_relaxed);
+            return;
+        }
+        if (::Eden::Performance::pipelined_frames.load(std::memory_order_relaxed)) {
+            const bool done = CurrentSyncRequestFence() >= fence;
+            if (done) pending_composite_fence = 0;
+            pending.store(!done, std::memory_order_relaxed);
+            return;
+        }
+        pending_composite_fence = 0;
+        WaitForSyncOperation(fence);
+        pending.store(false, std::memory_order_relaxed);
+    }]=] gpu_source "${gpu_source}")
+string(PREPEND gpu_source "#include \"${EDEN_PORT_DIR}/performance.h\"\n")
 write_derived("${PORT_BUILD_DIR}/gpu.cpp" "${gpu_source}")
 list(APPEND video_sources "${PORT_BUILD_DIR}/gpu.cpp")
 if(EDEN_DEV_PROFILE)

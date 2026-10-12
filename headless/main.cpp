@@ -791,6 +791,8 @@ int main(int argc, char** argv) {
                 } else if (entry == "cpu_accuracy=unsafe") {
                     // Dynarmic's unsafe FP shortcuts on top of Auto (reduced-error estimates, inaccurate NaN).
                     Settings::values.cpu_accuracy = Settings::CpuAccuracy::Unsafe;
+                } else if (entry == "pipeline=off") {
+                    Eden::Performance::pipelined_frames = false;
                 } else if (entry == "marks=off") {
                     // A run at the speed of a release build: a draw's phase marks and the timing
                     // of guest thread waits cost about 3 ms a frame in a large game.
