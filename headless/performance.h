@@ -429,13 +429,20 @@ void ReportSessionMemory(const char* phase, unsigned session);
 void ReportGpuThread(unsigned frame);
 inline std::atomic<unsigned> capture_passes{};
 
+// A Timer counts only when timers are on: in a development build (set when a game starts) and
+// in a cost run. Only development reports read the totals, and timers sit on hot paths: one a
+// draw on the GPU thread, one for every guest read of memory the GPU caches follow (several
+// thousand of each a frame in a large game). Elsewhere a Timer is one look at this flag.
+inline std::atomic<bool> timers_on{false};
 class Timer {
 public:
     explicit Timer(Totals& target, unsigned long long bytes = 0)
-        : totals(target), requested_bytes(bytes), start(Common::g_wall_clock.GetTimeNS()) {}
+        : totals(target), requested_bytes(bytes), on(timers_on.load(std::memory_order_relaxed)),
+          start(on ? Common::g_wall_clock.GetTimeNS() : std::chrono::nanoseconds{}) {}
     Timer(const Timer&) = delete;
     Timer& operator=(const Timer&) = delete;
     ~Timer() {
+        if (!on) return;
         const auto elapsed = (Common::g_wall_clock.GetTimeNS() - start).count();
         totals.nanoseconds.fetch_add(static_cast<unsigned long long>(elapsed), std::memory_order_relaxed);
         if (requested_bytes) totals.requested_bytes.fetch_add(requested_bytes, std::memory_order_relaxed);
@@ -444,6 +451,7 @@ public:
 private:
     Totals& totals;
     unsigned long long requested_bytes;
+    bool on;
     std::chrono::nanoseconds start;
 };
 

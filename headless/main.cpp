@@ -558,10 +558,12 @@ int main(int argc, char** argv) {
 #ifdef EDEN_DEV_VULKAN
         Eden::Performance::vulkan_cost_enabled = std::filesystem::exists(Eden::AppFile("cost-run.txt")) ||
                                                  std::filesystem::exists(Eden::AppFile("long-frames.txt"));
+        if (Eden::Performance::vulkan_cost_enabled) Eden::Performance::timers_on = true;  // a cost run
         const bool performance_run = std::filesystem::exists(Eden::AppFile("performance-run.txt"));
 #ifdef EDEN_DEV_PROFILE
         Eden::Performance::texture_budget_log = true;  // EDEN_VULKAN_TEXTURE_BUDGET every 300 frames
         Eden::Performance::dev_marks = true;           // a draw's phases and guest thread waits (EDEN_DEV_ lines)
+        Eden::Performance::timers_on = true;           // the timers the development reports read
         // Optional 20 Hz GPU-thread PC samples. The handler must exist before the
         // GPU thread registers, which unblocks SIGUSR2 only while sampling is on.
         const bool pc_sample_run = std::filesystem::exists(Eden::AppFile("pc-sample.txt"));
