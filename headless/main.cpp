@@ -798,8 +798,8 @@ int main(int argc, char** argv) {
                     Settings::values.cpu_accuracy = Settings::CpuAccuracy::Unsafe;
                 } else if (entry == "frame_trace=on") {
                     Eden::Performance::frame_trace = true;
-                } else if (entry == "pipeline=off") {
-                    Eden::Performance::pipelined_frames = false;
+                } else if (entry == "pipeline=on") {
+                    Eden::Performance::pipelined_frames = true;
                 } else if (entry == "marks=off") {
                     // A run at the speed of a release build: a draw's phase marks and the timing
                     // of guest thread waits cost about 3 ms a frame in a large game.

@@ -471,9 +471,10 @@ private:
 inline std::atomic<bool> dev_marks{false};
 // The game makes its next frame while the GPU thread still works on the last one (CMakeLists.txt,
 // the display's composer). composite_pending: the GPU thread has not yet shown the frame it was
-// last given, as the composer found it at this vsync. dev-settings pipeline=off: as Eden has it,
-// the vsync waits.
-inline std::atomic<bool> pipelined_frames{true};
+// last given, as the composer found it at this vsync. Off unless dev-settings pipeline=on: it
+// changed nothing where it was tried (the game there paced itself at three refreshes a frame by
+// its own choice), so the vsync waits, as Eden has it.
+inline std::atomic<bool> pipelined_frames{false};
 // Development (dev-settings frame_trace=on): what happens to a frame, in order, between the game
 // (it waits for a picture buffer, gets one, hands the frame in, pushes its commands), the
 // display's composer (vsync, buffer given back, frame taken, composite asked for) and the GPU
