@@ -96,7 +96,17 @@ void RasterizerVulkan::DispatchCompute() {"""),
     # scenes (VK_ERROR_DEVICE_LOST in Xenoblade 2's cities). CHECK_MASK is the configurable
     # dispatch interval (dev-settings dispatch_draws=N); default 64 draws between hand-offs.
     ('#ifdef __ANDROID__\n    static constexpr u32 DRAWS_TO_DISPATCH = 512;\n    static constexpr u32 CHECK_MASK = 3;\n#else\n    static constexpr u32 DRAWS_TO_DISPATCH = 4096;\n    static constexpr u32 CHECK_MASK = 7;\n#endif // __ANDROID__\n\n    static_assert(DRAWS_TO_DISPATCH % (CHECK_MASK + 1) == 0);\n',
-     '    static constexpr u32 DRAWS_TO_DISPATCH = 512;\n    const u32 CHECK_MASK = ::Eden::Performance::dispatch_mask.load(std::memory_order_relaxed);\n\n'),
+     '    static constexpr u32 DRAWS_TO_DISPATCH = 512;\n    const u32 CHECK_MASK = ::Eden::Performance::dispatch_mask.load(std::memory_order_relaxed);\n    recorded_tick = scheduler.CurrentTick();\n\n'),
+    # A guest fence with something to wait for submits twice in a row: its own Flush
+    # (InnerFence::Queue, vk_fence_manager.cpp), then the fence manager's FlushCommands, which
+    # asks only whether a draw was counted since the counter was last cleared - and a fence's
+    # Flush does not clear it. The second submission holds nothing: a quarter of a millisecond
+    # of the worker thread in the driver, and a large open-world game makes seven of them a
+    # frame (24 submissions a frame, 7 of them empty). FlushCommands now submits only when
+    # nothing has been submitted since the last draw was recorded (FlushWork notes the
+    # scheduler's tick at every draw, clear and dispatch).
+    ('void RasterizerVulkan::FlushCommands() {\n    if (draw_counter == 0) {\n        return;\n    }\n    draw_counter = 0;\n    scheduler.Flush();\n}',
+     'namespace {\n// The scheduler\'s tick when the last draw, clear or dispatch was recorded (GPU thread).\nu64 recorded_tick = 0;\n} // namespace\n\nvoid RasterizerVulkan::FlushCommands() {\n    if (draw_counter == 0) {\n        return;\n    }\n    draw_counter = 0;\n    if (scheduler.CurrentTick() != recorded_tick) {\n        return; // a submission has taken every draw already\n    }\n    scheduler.Flush();\n}'),
     # Where the ~4 us a draw spends goes: six phases under one running clock, each Mark taking the
     # gap since the previous one so they do not overlap. The Timer still wraps the whole function,
     # so a draw that returns early is charged for its unmarked tail and the sum of the six falls
