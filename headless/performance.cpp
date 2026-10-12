@@ -74,16 +74,18 @@ struct StallSample {
     std::array<uintptr_t, 14> calls;
     std::atomic<bool> done;
 };
-std::array<StallSample, 4096> stall_samples{};
+std::array<StallSample, 16384> stall_samples{};
 std::atomic<unsigned> stall_count{};
 unsigned stall_reported{};
 std::atomic<bool> stall_sampling{};
-std::array<pthread_t, 3> stall_threads{};
-std::array<std::atomic<bool>, 3> stall_ready{};
+// Slots 0 to 2: the guest cores. Slot 3: the GPU thread, when it is profiled.
+std::array<pthread_t, 4> stall_threads{};
+std::array<std::atomic<bool>, 4> stall_ready{};
+std::atomic<bool> gpu_profile{};
 // A thread reads its own stack through its pipe: an address that is not mapped fails the write
 // instead of faulting (the stack of a guest thread is a fiber's, of unknown extent).
-std::array<std::array<int, 2>, 3> stall_pipes{};
-std::array<std::array<uintptr_t, 512>, 3> stall_words{};
+std::array<std::array<int, 2>, 4> stall_pipes{};
+std::array<std::array<uintptr_t, 512>, 4> stall_words{};
 #endif
 #if defined(EDEN_DEV_WAIT_CALLERS) && defined(PS5_NATIVE)
 // Same firmware6.02 register offsets qualified by the C46 caller sampler.
@@ -518,6 +520,7 @@ void ReportSessionMemory(const char* phase, unsigned session) {
 }
 
 void ReportGpuThread(unsigned frame) {
+    ReportStallSamples();  // the GPU thread's profile, when it is taken
     if (frame_trace.load(std::memory_order_relaxed)) {
         static constexpr const char* names[]{"vsync", "buffer_back", "frame_taken", "composite_asked",
             "game_waits_buffer", "game_has_buffer", "game_hands_frame", "game_pushes", "gpu_push_begin",
@@ -805,14 +808,16 @@ void RegisterWorker(const char* name) {
         }
 #endif
 #if defined(EDEN_DEV_PROFILE) && defined(PS5_NATIVE)
-        if (stall_sampling.load(std::memory_order_acquire) && i < stall_threads.size()) {
+        const int stall_slot = i < 3 ? static_cast<int>(i)
+            : i == 4 && gpu_profile.load(std::memory_order_acquire) ? 3 : -1;
+        if (stall_sampling.load(std::memory_order_acquire) && stall_slot >= 0) {
             sigset_t mask;
             sigemptyset(&mask);
             sigaddset(&mask, SIGUSR2);
             if (pthread_sigmask(SIG_UNBLOCK, &mask, nullptr))
                 throw std::runtime_error("Cannot enable the development stall sampler");
-            stall_threads[i] = pthread_self();
-            stall_ready[i].store(true, std::memory_order_release);
+            stall_threads[stall_slot] = pthread_self();
+            stall_ready[stall_slot].store(true, std::memory_order_release);
         }
 #endif
         worker.clock_error = CurrentCpuClock(&worker.clock);
@@ -1069,18 +1074,25 @@ void BeginStallSampling() {
                 static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(__eden_text_start)),
                 static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(__eden_text_end)), stall_samples.size());
     std::thread([] {
-        for (;;) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        for (unsigned tick = 0;; ++tick) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(4));
             const long long last = last_frame_ns.load(std::memory_order_relaxed);
             if (last == 0 || frames_shown.load(std::memory_order_relaxed) < 900) continue;
-            const long long gap = NowNs() - last;
-            if (gap < 120'000'000 || gap > 1'500'000'000) continue;
             if (stall_count.load(std::memory_order_relaxed) >= stall_samples.size()) continue;
-            for (unsigned core = 0; core < stall_threads.size(); ++core)
+            const long long gap = NowNs() - last;
+            if (gap > 1'500'000'000) continue;
+            // The GPU thread's profile: every tick while frames come.
+            if (gpu_profile.load(std::memory_order_relaxed) && stall_ready[3].load(std::memory_order_acquire))
+                pthread_kill(stall_threads[3], SIGUSR2);
+            // The guest cores: every other tick, and only while a frame is overdue.
+            if (gap < 120'000'000 || (tick & 1)) continue;
+            for (unsigned core = 0; core < 3; ++core)
                 if (stall_ready[core].load(std::memory_order_acquire)) pthread_kill(stall_threads[core], SIGUSR2);
         }
     }).detach();
 }
+
+void BeginGpuProfile() { gpu_profile.store(true, std::memory_order_release); }
 
 void EndStallWindow() {
     for (auto& ready : stall_ready) ready.store(false, std::memory_order_release);
@@ -1104,6 +1116,7 @@ void ReportStallSamples() {
 }
 #else
 void BeginStallSampling() {}
+void BeginGpuProfile() {}
 void EndStallWindow() {}
 void ReportStallSamples() {}
 #endif

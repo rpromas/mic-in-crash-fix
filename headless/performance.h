@@ -60,6 +60,10 @@ void CoreRan(unsigned core, long long start_ns);
 // build has no frame pointers; tools read them back as crash reports are read). Not in the
 // first 900 frames of a game: signals during a boot have hung it.
 void BeginStallSampling();
+// gpu-profile.txt in the app folder: the same samples from the GPU thread, every 4 ms while a
+// game shows frames (they are core 3 in the lines): where that thread's time goes. Call before
+// BeginStallSampling.
+void BeginGpuProfile();
 void EndStallWindow();      // the game is stopping: no more signals to its threads
 void ReportStallSamples();  // prints what was sampled since the last call
 inline std::atomic<long long> last_frame_ns{0};

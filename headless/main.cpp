@@ -572,7 +572,10 @@ int main(int argc, char** argv) {
         }
         // Where the guest cores' host threads are while a frame is overdue (performance.h).
         static bool stall_sampler_installed = false;
-        if (!stall_sampler_installed && std::filesystem::exists(Eden::AppFile("stall-sample.txt"))) {
+        const bool gpu_profile_run = std::filesystem::exists(Eden::AppFile("gpu-profile.txt"));
+        if (!stall_sampler_installed &&
+            (gpu_profile_run || std::filesystem::exists(Eden::AppFile("stall-sample.txt")))) {
+            if (gpu_profile_run) Eden::Performance::BeginGpuProfile();
             if (!pc_sampler_installed) {
                 Eden::Performance::BeginPcSampling();  // the signal's handler
                 pc_sampler_installed = true;
