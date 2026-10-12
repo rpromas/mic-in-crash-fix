@@ -943,7 +943,20 @@ int main(int argc, char** argv) {
                 Settings::ScalingFilter::Bilinear, Settings::ScalingFilter::Fsr, Settings::ScalingFilter::Bicubic,
                 Settings::ScalingFilter::NearestNeighbor};
             // Settings > Video, with what the game does differently (Library > Game settings > Video).
-            const auto video = Eden::PreferencesFor(eden_game_title_id(guest));
+            auto video = Eden::PreferencesFor(eden_game_title_id(guest));
+#ifdef EDEN_DEV_PROFILE
+            {
+                // One run at another resolution or without frame generation, over the settings:
+                // dev-settings resolution=1x|2x, framegen=off|on.
+                std::ifstream dev_video(Eden::AppFile("dev-settings.txt"));
+                for (std::string entry; dev_video >> entry;) {
+                    if (entry == "resolution=1x") video.resolution = 2;
+                    else if (entry == "resolution=2x") video.resolution = 4;
+                    else if (entry == "framegen=off") video.frame_gen = false;
+                    else if (entry == "framegen=on") video.frame_gen = true;
+                }
+            }
+#endif
             const int resolution = video.resolution;
             const int filter = video.upscaling_filter;
             Settings::values.resolution_setup.SetValue(resolutions[resolution]);

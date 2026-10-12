@@ -713,7 +713,7 @@ for call in ('vmaCreateImage(allocator, &ci, &alloc_ci, &handle, &allocation, &a
 include = '#include "video_core/vulkan_common/vulkan_memory_allocator.h"\n'
 if allocator.count(include) != 1:
     raise RuntimeError('Pinned Vulkan allocator changed: its own include')
-allocator = allocator.replace(include, include + '#include <atomic>\n#include <cstdio>\n#include "performance.h"\n')
+allocator = allocator.replace(include, include + '#include <atomic>\n#include <cstdio>\n#include <cstdlib>\n#include <cstring>\n#include <string>\n#include "performance.h"\n')
 # Development: what the allocator holds, heap by heap (performance.h, eden_report_vma).
 constructor = '                    device_.GetPhysical().GetProperties().limits.bufferImageGranularity} {\n'
 if allocator.count(constructor) != 1:
@@ -723,6 +723,25 @@ allocator = allocator.replace('#include "performance.h"\n', '#include "performan
 allocator += '''
 extern "C" void eden_report_vma() {
     if (!eden_vma) return;
+    // EDEN_VMA_DUMP=PATH:CALL in the environment (dev-settings env=...): at that call of this
+    // report (one every 300 frames) everything the allocator holds, block by block, as JSON.
+    static unsigned calls = 0;
+    ++calls;
+    if (const char* dump = std::getenv("EDEN_VMA_DUMP")) {
+        const char* colon = std::strrchr(dump, ':');
+        if (colon && static_cast<unsigned>(std::atoi(colon + 1)) == calls) {
+            char* stats = nullptr;
+            vmaBuildStatsString(eden_vma, &stats, VK_TRUE);
+            if (stats) {
+                const std::string path(dump, static_cast<std::size_t>(colon - dump));
+                if (std::FILE* file = std::fopen(path.c_str(), "wb")) {
+                    std::fwrite(stats, 1, std::strlen(stats), file);
+                    std::fclose(file);
+                }
+                vmaFreeStatsString(eden_vma, stats);
+            }
+        }
+    }
     VmaTotalStatistics total{};
     vmaCalculateStatistics(eden_vma, &total);
     VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
