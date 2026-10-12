@@ -864,11 +864,8 @@ int main(int argc, char** argv) {
                     // Decoded on other threads: a texture shows a frame or two late instead of
                     // holding the frame it is first used in.
                     Settings::values.accelerate_astc.SetValue(Settings::AstcDecodeMode::CpuAsynchronous);
-                } else if (entry == "astc_recompress=bc1" || entry == "astc_recompress=bc3") {
-                    // ASTC textures (the console's GPU has no ASTC) kept as BC1 or BC3 instead of
-                    // RGBA8: an eighth or a quarter of the graphics memory, for decoding on the CPU.
-                    Settings::values.astc_recompression.SetValue(entry.ends_with('1')
-                        ? Settings::AstcRecompression::Bc1 : Settings::AstcRecompression::Bc3);
+                } else if (entry.starts_with("astc_recompress=")) {
+                    // Read where the session's value is decided (Settings > Video, below).
                 } else if (entry == "log=render") {
                     // Renderer debug logging for crash probes (fetched every few seconds).
                     Common::Log::Filter filter;
@@ -953,6 +950,7 @@ int main(int argc, char** argv) {
                 Settings::ScalingFilter::NearestNeighbor};
             // Settings > Video, with what the game does differently (Library > Game settings > Video).
             auto video = Eden::PreferencesFor(eden_game_title_id(guest));
+            int astc_override = -1;  // dev-settings astc_recompress=off|bc1|bc3
 #ifdef EDEN_DEV_PROFILE
             {
                 // One run at another resolution or without frame generation, over the settings:
@@ -965,12 +963,26 @@ int main(int argc, char** argv) {
                     else if (entry == "framegen=on") video.frame_gen = true;
                     else if (entry == "filter=bilinear") video.upscaling_filter = 0;
                     else if (entry == "filter=fsr") video.upscaling_filter = 1;
+                    else if (entry == "astc_recompress=off") astc_override = 0;
+                    else if (entry == "astc_recompress=bc1") astc_override = 1;
+                    else if (entry == "astc_recompress=bc3") astc_override = 2;
                 }
             }
 #endif
             const int resolution = video.resolution;
             const int filter = video.upscaling_filter;
             Settings::values.resolution_setup.SetValue(resolutions[resolution]);
+            // Above 1x, ASTC textures are kept as BC3. The console's GPU has no ASTC, so Eden holds
+            // such a texture decoded, at four bytes a pixel; BC3 takes one. A large open-world game
+            // has two texture arrays of 121 layers in that format: 816 MiB decoded, 204 MiB as BC3.
+            // At 2x, where every render target also has a copy four times its size, that was the
+            // memory a session ran out of within a minute of play, and with BC3 it did not; the GPU
+            // thread's time for a frame was the same either way (26.0 and 25.6 to 26.7 ms). At 1x
+            // and below there is room, and the textures stay as they are decoded.
+            const int astc_as = astc_override >= 0 ? astc_override : resolution > Eden::kNativeResolution ? 2 : 0;
+            Settings::values.astc_recompression.SetValue(astc_as == 2   ? Settings::AstcRecompression::Bc3
+                                                         : astc_as == 1 ? Settings::AstcRecompression::Bc1
+                                                                        : Settings::AstcRecompression::Uncompressed);
             Settings::values.scaling_filter.SetValue(filters[filter]);
             Settings::UpdateRescalingInfo();
 #ifdef EDEN_PS5_FRAMEGEN
@@ -1053,7 +1065,7 @@ int main(int argc, char** argv) {
             Eden::Report("launch", (std::string("Resolution ") + Eden::kResolutionKeys[resolution] + ", " +
                                     Eden::kUpscalingFilterLabels[filter] + ", output " +
                                     Eden::kOutputKeys[video.output] + ", " + Eden::kRefreshKeys[refresh] +
-                                    " Hz").c_str());
+                                    " Hz" + (astc_as ? ", ASTC textures as BC" + std::string(astc_as == 2 ? "3" : "1") : "")).c_str());
             // Speed against accuracy ("performance" in the settings file, settings_store.h): each
             // one is off unless chosen there, for every game or for this one. The levels start
             // every session at their exact values (above), so one that is not chosen is off.
