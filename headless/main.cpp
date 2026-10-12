@@ -1869,7 +1869,9 @@ int main(int argc, char** argv) {
             }
         }
         passed("core_destroyed");
+#ifdef EDEN_PS5_OPENGL
         Eden::Performance::ReportSessionMemory("end", 0);
+#endif
         if (devices && pad) {
             pad.reset();
             LOG_INFO(Frontend, "EDEN_DEVICE_FRONTEND_PASS");
