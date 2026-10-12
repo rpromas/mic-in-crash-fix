@@ -460,6 +460,27 @@ inline std::atomic<bool> dev_marks{false};
 // last given, as the composer found it at this vsync. dev-settings pipeline=off: as Eden has it,
 // the vsync waits.
 inline std::atomic<bool> pipelined_frames{true};
+// Development (dev-settings frame_trace=on): what happens to a frame, in order, between the game
+// (it waits for a picture buffer, gets one, hands the frame in, pushes its commands), the
+// display's composer (vsync, buffer given back, frame taken, composite asked for) and the GPU
+// thread (a push worked through, the composite done). Each report prints the last 400 ms.
+enum FrameEventKind : unsigned {
+    kEvCompose, kEvRelease, kEvAcquire, kEvCompositeAsk, kEvDequeueWait, kEvDequeued, kEvQueued,
+    kEvSubmit, kEvDispatchBegin, kEvDispatchEnd, kEvCompositeBegin, kEvCompositeEnd, kEvCount,
+};
+struct FrameEvent {
+    long long ns;
+    unsigned kind;
+    unsigned long long value;
+};
+inline std::atomic<bool> frame_trace{false};
+inline std::array<FrameEvent, 2048> frame_events{};
+inline std::atomic<unsigned> frame_event_count{0};
+inline void NoteFrameEvent(unsigned kind, unsigned long long value = 0) {
+    if (!frame_trace.load(std::memory_order_relaxed)) return;
+    const unsigned at = frame_event_count.fetch_add(1, std::memory_order_relaxed) % frame_events.size();
+    frame_events[at] = FrameEvent{NowNs(), kind, value};
+}
 inline std::atomic<bool> composite_pending{false};
 inline long long MarkStart() { return dev_marks.load(std::memory_order_relaxed) ? NowNs() : 0; }
 inline void Mark(Totals& totals, long long& since) {

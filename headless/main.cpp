@@ -791,6 +791,8 @@ int main(int argc, char** argv) {
                 } else if (entry == "cpu_accuracy=unsafe") {
                     // Dynarmic's unsafe FP shortcuts on top of Auto (reduced-error estimates, inaccurate NaN).
                     Settings::values.cpu_accuracy = Settings::CpuAccuracy::Unsafe;
+                } else if (entry == "frame_trace=on") {
+                    Eden::Performance::frame_trace = true;
                 } else if (entry == "pipeline=off") {
                     Eden::Performance::pipelined_frames = false;
                 } else if (entry == "marks=off") {

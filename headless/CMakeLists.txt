@@ -816,6 +816,12 @@ foreach(pinned IN ITEMS composer_wait_old composer_acquire_old)
 endforeach()
 string(REPLACE "${composer_wait_old}" "    nvdisp.WaitForComposite();\n    const bool composite_pending = ::Eden::Performance::composite_pending.load(std::memory_order_relaxed);\n    this->ReleaseFramebuffersLocked(display);" composer_source "${composer_source}")
 string(REPLACE "${composer_acquire_old}" "        bool should_try_acquire = !composite_pending;" composer_source "${composer_source}")
+# Development: the frame's events (performance.h, NoteFrameEvent). Nothing unless frame_trace is on.
+string(REPLACE "    const bool composite_pending = ::Eden::Performance::composite_pending.load(std::memory_order_relaxed);"
+    "    const bool composite_pending = ::Eden::Performance::composite_pending.load(std::memory_order_relaxed);\n    ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvCompose, composite_pending);" composer_source "${composer_source}")
+string(REPLACE "        framebuffer.is_acquired = false;" "        framebuffer.is_acquired = false;\n        ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvRelease);" composer_source "${composer_source}")
+string(REPLACE "    framebuffer.is_acquired = true;" "    framebuffer.is_acquired = true;\n    ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvAcquire, static_cast<unsigned long long>(swap_interval));" composer_source "${composer_source}")
+string(REPLACE "        nvdisp.Composite(composition_stack);" "        ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvCompositeAsk);\n        nvdisp.Composite(composition_stack);" composer_source "${composer_source}")
 write_derived("${PORT_BUILD_DIR}/hardware_composer.cpp" "#include \"${EDEN_PORT_DIR}/performance.h\"\n${composer_source}")
 list(REMOVE_ITEM core_sources "hle/service/nvnflinger/hardware_composer.cpp")
 list(APPEND core_sources "${PORT_BUILD_DIR}/hardware_composer.cpp")
@@ -840,7 +846,9 @@ if(EDEN_DEV_PROFILE)
     if(producer_at LESS 0)
         message(FATAL_ERROR "Pinned buffer queue dequeue changed")
     endif()
-    string(REPLACE "${producer_old}" "        const auto dequeue_start = ::Eden::Performance::NowNs();\n${producer_old}\n        ::Eden::Performance::AddSince(::Eden::Performance::guest_dequeue_wait, dequeue_start);" producer_source "${producer_source}")
+    string(REPLACE "${producer_old}" "        const auto dequeue_start = ::Eden::Performance::NowNs();\n        ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvDequeueWait);\n${producer_old}\n        ::Eden::Performance::AddSince(::Eden::Performance::guest_dequeue_wait, dequeue_start);\n        ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvDequeued, static_cast<unsigned long long>(found));" producer_source "${producer_source}")
+    string(REPLACE "Status BufferQueueProducer::QueueBuffer(s32 slot, const QueueBufferInput& input, QueueBufferOutput* output) {"
+        "Status BufferQueueProducer::QueueBuffer(s32 slot, const QueueBufferInput& input, QueueBufferOutput* output) {\n    ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvQueued, static_cast<unsigned long long>(slot));" producer_source "${producer_source}")
     write_derived("${PORT_BUILD_DIR}/buffer_queue_producer.cpp" "#include \"${EDEN_PORT_DIR}/performance.h\"\n${producer_source}")
     list(REMOVE_ITEM core_sources "hle/service/nvnflinger/buffer_queue_producer.cpp")
     list(APPEND core_sources "${PORT_BUILD_DIR}/buffer_queue_producer.cpp")
@@ -2055,7 +2063,7 @@ if(EDEN_PS5_OPENGL)
                 "            { ::Eden::Performance::Timer idle_timer(::Eden::Performance::gpu_queue_wait);\n${hud_wait}\n            }"
                 gpu_worker "${gpu_worker}")
             string(REPLACE "${dispatch_call}"
-                "                { ::Eden::Performance::Timer dispatch_timer(::Eden::Performance::gpu_dispatch);\n${dispatch_call}\n                }"
+                "                { ::Eden::Performance::Timer dispatch_timer(::Eden::Performance::gpu_dispatch);\n                ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvDispatchBegin);\n${dispatch_call}\n                ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvDispatchEnd);\n                }"
                 gpu_worker "${gpu_worker}")
             string(REPLACE "if (count <= 3) LOG_INFO(Render_OpenGL, \"EDEN_GPU_DISPATCH_"
                 "if (count <= 3 || ::Eden::Performance::BootTrace()) LOG_INFO(Render_OpenGL, \"EDEN_GPU_DISPATCH_"
@@ -2152,6 +2160,10 @@ string(REPLACE "${wait_composite_old}" [=[    void WaitForComposite() {
         WaitForSyncOperation(fence);
         pending.store(false, std::memory_order_relaxed);
     }]=] gpu_source "${gpu_source}")
+string(REPLACE "        gpu_thread.SubmitList(channel, std::move(entries), is_async);"
+    "        ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvSubmit, entries.command_lists.size());\n        gpu_thread.SubmitList(channel, std::move(entries), is_async);" gpu_source "${gpu_source}")
+string(REPLACE "renderer->Composite(composite_layers);"
+    "{ ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvCompositeBegin); renderer->Composite(composite_layers); ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvCompositeEnd); }" gpu_source "${gpu_source}")
 string(PREPEND gpu_source "#include \"${EDEN_PORT_DIR}/performance.h\"\n")
 write_derived("${PORT_BUILD_DIR}/gpu.cpp" "${gpu_source}")
 list(APPEND video_sources "${PORT_BUILD_DIR}/gpu.cpp")

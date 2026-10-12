@@ -518,6 +518,19 @@ void ReportSessionMemory(const char* phase, unsigned session) {
 }
 
 void ReportGpuThread(unsigned frame) {
+    if (frame_trace.load(std::memory_order_relaxed)) {
+        static constexpr const char* names[]{"vsync", "buffer_back", "frame_taken", "composite_asked",
+            "game_waits_buffer", "game_has_buffer", "game_hands_frame", "game_pushes", "gpu_push_begin",
+            "gpu_push_end", "composite_begin", "composite_end"};
+        static std::array<FrameEvent, 2048> copy;
+        copy = frame_events;
+        std::sort(copy.begin(), copy.end(), [](const FrameEvent& a, const FrameEvent& b) { return a.ns < b.ns; });
+        const long long from = NowNs() - 400'000'000;
+        for (const FrameEvent& event : copy)
+            if (event.ns >= from && event.kind < kEvCount)
+                std::printf("EDEN_FRAME_EVENT ms=%.2f %s %llu\n", static_cast<double>(event.ns - from) / 1e6,
+                            names[event.kind], event.value);
+    }
     // Heap growth and arena use over the run (allocation failures abort the title).
     ps5_opengl_heap_snapshot("vulkan_report", frame);
     {
