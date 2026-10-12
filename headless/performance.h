@@ -64,6 +64,13 @@ void BeginStallSampling();
 // game shows frames (they are core 3 in the lines): where that thread's time goes. Call before
 // BeginStallSampling.
 void BeginGpuProfile();
+// A profile of the guest cores' host threads (core-profile.txt, holding the first frame to take
+// it from: past a title screen and the loading): a sample of each every 4 ms, printed when the
+// game ends. JIT code is told from the rest by the caches' addresses (EDEN_JIT_ALIAS lines).
+void BeginCoreProfile(unsigned first_frame);
+// Development: the CPUs every thread but the pinned ones may run on (dev-settings
+// secondary_mask=HEX), to try other placements of the Vulkan worker and the service threads.
+void SetSecondaryMask(unsigned long long mask);
 // The GPU thread is waiting for work (set around its wait in development builds): no sample then.
 inline std::atomic<bool> gpu_thread_idle{false};
 void EndStallWindow();      // the game is stopping: no more signals to its threads

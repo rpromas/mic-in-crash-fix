@@ -82,6 +82,7 @@ std::atomic<bool> stall_sampling{};
 std::array<pthread_t, 4> stall_threads{};
 std::array<std::atomic<bool>, 4> stall_ready{};
 std::atomic<bool> gpu_profile{};
+std::atomic<unsigned> core_profile_from{};  // the guest cores' profile: its first frame, 0 for none
 // A thread reads its own stack through its pipe: an address that is not mapped fails the write
 // instead of faulting (the stack of a guest thread is a fiber's, of unknown extent).
 std::array<std::array<int, 2>, 4> stall_pipes{};
@@ -479,6 +480,21 @@ void SetSecondaryPlacement(bool enabled) {
                 enabled ? secondary_cpus : 0ULL, result ? errno : 0);
 #else
     (void)enabled;
+#endif
+}
+
+void SetSecondaryMask(unsigned long long mask) {
+#ifdef PS5_NATIVE
+    if (!topology_allowed_valid || !worker_topology_ready) return;
+    unsigned long long allowed = 0;
+    for (unsigned cpu = 0; cpu < 64; ++cpu)
+        if (CPU_ISSET(cpu, &topology_allowed)) allowed |= 1ULL << cpu;
+    if (!(mask & allowed)) return;
+    secondary_cpus = mask & allowed;
+    std::printf("EDEN_WORKER_SECONDARY mask=%llx set=1\n", secondary_cpus);
+    SetSecondaryPlacement(placement_secondary.load(std::memory_order_relaxed));
+#else
+    (void)mask;
 #endif
 }
 
@@ -1221,7 +1237,8 @@ void BeginStallSampling() {
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
             const long long last = last_frame_ns.load(std::memory_order_relaxed);
             // After a game (EndStallWindow): what is left of the profile.
-            if (last == 0 && gpu_profile.load(std::memory_order_relaxed)) {
+            const unsigned core_from = core_profile_from.load(std::memory_order_relaxed);
+            if (last == 0 && (gpu_profile.load(std::memory_order_relaxed) || core_from)) {
                 PrintStallSamples();
                 TraceAllocations(false);
                 if (heap_trace_frames) eden_heap_trace_print(heap_trace_frames);
@@ -1232,7 +1249,8 @@ void BeginStallSampling() {
             const bool full = stall_count.load(std::memory_order_relaxed) >= stall_samples.size();
             // The profile is printed from here, not from the thread it is of: when frames stop
             // coming (the game ended or is loading) or the buffer is full.
-            if (gpu_profile.load(std::memory_order_relaxed) && (full || gap > 1'500'000'000)) PrintStallSamples();
+            if ((gpu_profile.load(std::memory_order_relaxed) || core_from) && (full || gap > 1'500'000'000))
+                PrintStallSamples();
             if (full || gap > 1'500'000'000) {
                 TraceAllocations(false);
                 continue;
@@ -1242,6 +1260,14 @@ void BeginStallSampling() {
             if (gpu_profile.load(std::memory_order_relaxed) && stall_ready[3].load(std::memory_order_acquire) &&
                 !gpu_thread_idle.load(std::memory_order_relaxed))
                 pthread_kill(stall_threads[3], SIGUSR2);
+            // The guest cores' profile: every tick from its first frame on, and nothing before it
+            // (the samples of a loading screen would fill the buffer).
+            if (core_from) {
+                if (frames_shown.load(std::memory_order_relaxed) >= core_from)
+                    for (unsigned core = 0; core < 3; ++core)
+                        if (stall_ready[core].load(std::memory_order_acquire)) pthread_kill(stall_threads[core], SIGUSR2);
+                continue;
+            }
             // The guest cores: every other tick, and only while a frame is overdue.
             if (gap < 120'000'000 || (tick & 1)) continue;
             for (unsigned core = 0; core < 3; ++core)
@@ -1251,6 +1277,9 @@ void BeginStallSampling() {
 }
 
 void BeginGpuProfile() { gpu_profile.store(true, std::memory_order_release); }
+void BeginCoreProfile(unsigned first_frame) {
+    core_profile_from.store(first_frame ? first_frame : 1, std::memory_order_release);
+}
 
 void EndStallWindow() {
     for (auto& ready : stall_ready) ready.store(false, std::memory_order_release);
@@ -1260,7 +1289,8 @@ void EndStallWindow() {
 
 void ReportStallSamples() {
     // A profile of the GPU thread is printed when the game ends: printing is work of this thread.
-    if (!gpu_profile.load(std::memory_order_relaxed)) PrintStallSamples();
+    if (!gpu_profile.load(std::memory_order_relaxed) && !core_profile_from.load(std::memory_order_relaxed))
+        PrintStallSamples();
 }
 
 static void PrintStallSamples() {
@@ -1280,6 +1310,7 @@ static void PrintStallSamples() {
 #else
 void BeginStallSampling() {}
 void BeginGpuProfile() {}
+void BeginCoreProfile(unsigned) {}
 void EndStallWindow() {}
 void ReportStallSamples() {}
 #endif

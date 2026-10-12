@@ -56,7 +56,8 @@ inline Xbyak::Allocator* EdenJitAllocator() {
                 try {
                     std::lock_guard lock(mutex);
                     mappings.emplace(pointer, Mapping{writable, span});
-                    std::fprintf(diagnostics, "EDEN_JIT_ALIAS bytes=%zu active=1\n", span);
+                    // The executable view's address tells JIT code from the rest in a profile.
+                    std::fprintf(diagnostics, "EDEN_JIT_ALIAS bytes=%zu active=1 code=%p\n", span, executable);
                     return pointer;
                 } catch (...) {
                     // Release both views before reporting allocation failure.

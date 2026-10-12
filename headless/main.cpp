@@ -575,9 +575,16 @@ int main(int argc, char** argv) {
         // Where the guest cores' host threads are while a frame is overdue (performance.h).
         static bool stall_sampler_installed = false;
         const bool gpu_profile_run = std::filesystem::exists(Eden::AppFile("gpu-profile.txt"));
+        const bool core_profile_run = std::filesystem::exists(Eden::AppFile("core-profile.txt"));
         if (!stall_sampler_installed &&
-            (gpu_profile_run || std::filesystem::exists(Eden::AppFile("stall-sample.txt")))) {
+            (gpu_profile_run || core_profile_run || std::filesystem::exists(Eden::AppFile("stall-sample.txt")))) {
             if (gpu_profile_run) Eden::Performance::BeginGpuProfile();
+            if (core_profile_run) {
+                // The file holds the first frame to sample from (past a title screen and the loading).
+                unsigned first_frame = 0;
+                std::ifstream(Eden::AppFile("core-profile.txt")) >> first_frame;
+                Eden::Performance::BeginCoreProfile(first_frame);
+            }
             if (!pc_sampler_installed) {
                 Eden::Performance::BeginPcSampling();  // the signal's handler
                 pc_sampler_installed = true;
@@ -755,6 +762,9 @@ int main(int argc, char** argv) {
             for (std::string entry; dev_settings >> entry;) {
                 if (entry == "dma_accuracy=unsafe") {
                     Settings::values.dma_accuracy.SetValue(Settings::DmaAccuracy::Unsafe);
+                } else if (entry.starts_with("secondary_mask=")) {
+                    // The CPUs of the threads that are not pinned (performance.h), as a hexadecimal mask.
+                    Eden::Performance::SetSecondaryMask(std::strtoull(entry.c_str() + 15, nullptr, 16));
                 } else if (entry == "placement=off") {
                     Eden::Performance::SetSecondaryPlacement(false);
                 } else if (entry == "fastmem=off" || entry == "fastmem=on") {
