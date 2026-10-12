@@ -563,6 +563,20 @@ void GpuTimeCollect(const Device& device) {
 adapt('src/video_core/renderer_vulkan/vk_scheduler.cpp', 'vulkan_scheduler.cpp', [
     ('#include <memory>', '#include <memory>\n#include <array>\n#include <chrono>\n#include <cstdio>\n#include "dev_vulkan.h"'),
     ('namespace Vulkan {\n', 'namespace Vulkan {\n' + GPU_TIME_HELPERS),
+    # Development counts (headless/performance.h): who asks for each submission, and the worker
+    # thread's time at work.
+    ('#include "dev_vulkan.h"', '#include "dev_vulkan.h"\n#include "performance.h"'),
+    ('u64 Scheduler::Flush(VkSemaphore signal_semaphore, VkSemaphore wait_semaphore) {\n',
+     'u64 Scheduler::Flush(VkSemaphore signal_semaphore, VkSemaphore wait_semaphore) {\n'
+     '    ::Eden::Performance::NoteFlush(__builtin_return_address(0));\n'),
+    ('void Scheduler::Finish(VkSemaphore signal_semaphore, VkSemaphore wait_semaphore) {\n',
+     'void Scheduler::Finish(VkSemaphore signal_semaphore, VkSemaphore wait_semaphore) {\n'
+     '    ::Eden::Performance::NoteFlush(__builtin_return_address(0));\n'),
+    ('            work->ExecuteAll(current_cmdbuf, current_upload_cmdbuf);\n',
+     '            {\n'
+     '                ::Eden::Performance::Timer worker_timer(::Eden::Performance::worker_execute);\n'
+     '                work->ExecuteAll(current_cmdbuf, current_upload_cmdbuf);\n'
+     '            }\n'),
     ('        .pInheritanceInfo = nullptr,\n    });\n    current_upload_cmdbuf = vk::CommandBuffer(command_pool->Commit(), device.GetDispatchLoader());',
      '        .pInheritanceInfo = nullptr,\n    });\n    GpuTimeBegin(device, current_cmdbuf);\n'
      '    current_upload_cmdbuf = vk::CommandBuffer(command_pool->Commit(), device.GetDispatchLoader());'),

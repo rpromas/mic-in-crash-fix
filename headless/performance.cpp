@@ -132,6 +132,13 @@ std::atomic<std::size_t> core0_block_count{0};
 extern "C" {
 // The app's code, from the link (tools/unwind.ld).
 extern const char __eden_text_start[];
+#if defined(EDEN_DEV_PROFILE) && defined(PS5_NATIVE)
+extern "C" {
+void eden_heap_trace_self(void);
+void eden_heap_trace_enable(int on);
+void eden_heap_trace_print(unsigned long frames);
+}
+#endif
 extern const char __eden_text_end[];
 }
 // In the signal handler: only system calls, atomics and the clock.
@@ -519,7 +526,38 @@ void ReportSessionMemory(const char* phase, unsigned session) {
     std::fflush(stdout);
 }
 
+void NoteFlush(void* caller) {
+    if (!timers_on.load(std::memory_order_relaxed)) return;
+    const auto address = reinterpret_cast<std::uintptr_t>(caller);
+    for (FlushSite& site : flush_sites) {
+        std::uintptr_t seen = site.caller.load(std::memory_order_relaxed);
+        if (seen == 0 && site.caller.compare_exchange_strong(seen, address)) seen = address;
+        if (seen != address) continue;
+        site.calls.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+}
+
 void ReportGpuThread(unsigned frame) {
+    {
+        std::printf("EDEN_DEV_WORKER execute_calls=%llu execute_ns=%llu\n",
+                    worker_execute.calls.load(std::memory_order_relaxed),
+                    worker_execute.nanoseconds.load(std::memory_order_relaxed));
+        char line[900];
+#ifdef PS5_NATIVE
+        const auto text = reinterpret_cast<std::uintptr_t>(__eden_text_start);
+#else
+        const std::uintptr_t text = 0;
+#endif
+        int length = std::snprintf(line, sizeof(line), "EDEN_DEV_FLUSH text=%llx sites=",
+                                   static_cast<unsigned long long>(text));
+        for (const FlushSite& site : flush_sites)
+            if (site.caller.load(std::memory_order_relaxed) && length > 0 && length < 850)
+                length += std::snprintf(line + length, sizeof(line) - static_cast<std::size_t>(length), "%llx:%llu,",
+                                        static_cast<unsigned long long>(site.caller.load(std::memory_order_relaxed)),
+                                        site.calls.load(std::memory_order_relaxed));
+        std::puts(line);
+    }
     if (frame_trace.load(std::memory_order_relaxed)) {
         static constexpr const char* names[]{"vsync", "buffer_back", "frame_taken", "composite_asked",
             "game_waits_buffer", "game_has_buffer", "game_hands_frame", "game_pushes", "gpu_push_begin",
@@ -816,6 +854,7 @@ void RegisterWorker(const char* name) {
             if (pthread_sigmask(SIG_UNBLOCK, &mask, nullptr))
                 throw std::runtime_error("Cannot enable the development stall sampler");
             stall_threads[stall_slot] = pthread_self();
+            if (stall_slot == 3) eden_heap_trace_self();  // and where its allocations come from
             stall_ready[stall_slot].store(true, std::memory_order_release);
         }
 #endif
@@ -1066,6 +1105,19 @@ extern "C" void eden_jit_block(unsigned core, unsigned long long location, const
 
 #ifdef PS5_NATIVE
 static void PrintStallSamples();
+// The GPU thread's allocations are counted (headless/heap_arenas.inc) while its profile is taken;
+// the frames that covers are counted here, and the sites are printed when the game ends.
+static bool heap_tracing;
+static unsigned long long heap_trace_from, heap_trace_seen, heap_trace_frames;
+static void TraceAllocations(bool on) {
+    const unsigned long long frames = frames_shown.load(std::memory_order_relaxed);
+    if (heap_tracing && frames >= heap_trace_seen) heap_trace_seen = frames;
+    if (on == heap_tracing) return;
+    if (on) heap_trace_from = heap_trace_seen = frames;
+    else heap_trace_frames += heap_trace_seen - heap_trace_from;
+    heap_tracing = on;
+    eden_heap_trace_enable(on);
+}
 void BeginStallSampling() {
     for (auto& ends : stall_pipes)
         if (pipe(ends.data())) throw std::runtime_error("Cannot open the development stall sampler's pipes");
@@ -1078,14 +1130,23 @@ void BeginStallSampling() {
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
             const long long last = last_frame_ns.load(std::memory_order_relaxed);
             // After a game (EndStallWindow): what is left of the profile.
-            if (last == 0 && gpu_profile.load(std::memory_order_relaxed)) PrintStallSamples();
+            if (last == 0 && gpu_profile.load(std::memory_order_relaxed)) {
+                PrintStallSamples();
+                TraceAllocations(false);
+                if (heap_trace_frames) eden_heap_trace_print(heap_trace_frames);
+                heap_trace_frames = 0;
+            }
             if (last == 0 || frames_shown.load(std::memory_order_relaxed) < 900) continue;
             const long long gap = NowNs() - last;
             const bool full = stall_count.load(std::memory_order_relaxed) >= stall_samples.size();
             // The profile is printed from here, not from the thread it is of: when frames stop
             // coming (the game ended or is loading) or the buffer is full.
             if (gpu_profile.load(std::memory_order_relaxed) && (full || gap > 1'500'000'000)) PrintStallSamples();
-            if (full || gap > 1'500'000'000) continue;
+            if (full || gap > 1'500'000'000) {
+                TraceAllocations(false);
+                continue;
+            }
+            TraceAllocations(gpu_profile.load(std::memory_order_relaxed));
             // The GPU thread's profile: every tick while frames come.
             if (gpu_profile.load(std::memory_order_relaxed) && stall_ready[3].load(std::memory_order_acquire) &&
                 !gpu_thread_idle.load(std::memory_order_relaxed))

@@ -456,6 +456,68 @@ static struct eden_heap_thread *eden_heap_self(void) {
   return NULL;
 }
 
+#ifdef EDEN_DEV_PROFILE
+/* Development: where one thread's allocations come from (the GPU thread's profile,
+ * headless/performance.cpp). The thread asks to be traced; while tracing is on, every block it
+ * asks for is counted under two addresses: the allocator's caller, and the first address of the
+ * app's code above that on the stack (the caller of operator new, when that was the caller). */
+#include <stdio.h>
+extern const char __eden_text_start[], __eden_text_end[];
+#define EDEN_HEAP_TRACE_SITES 2048u
+static struct {
+  uintptr_t caller, above;
+  unsigned long count, bytes;
+} eden_heap_trace[EDEN_HEAP_TRACE_SITES];
+static struct eden_heap_thread *_Atomic eden_heap_traced;
+static atomic_int eden_heap_trace_on;
+static unsigned long eden_heap_trace_calls, eden_heap_trace_lost;
+
+void eden_heap_trace_self(void) { atomic_store(&eden_heap_traced, eden_heap_self()); }
+void eden_heap_trace_enable(int on) { atomic_store_explicit(&eden_heap_trace_on, on, memory_order_relaxed); }
+
+static void eden_heap_trace_note(uintptr_t caller, const uintptr_t *frame, size_t bytes) {
+  if (eden_heap_self() != atomic_load_explicit(&eden_heap_traced, memory_order_relaxed))
+    return;
+  const uintptr_t low = (uintptr_t)__eden_text_start, high = (uintptr_t)__eden_text_end;
+  uintptr_t above = 0;
+  for (unsigned i = 2; i < 14 && above == 0; ++i)
+    if (frame[i] > low && frame[i] < high)
+      above = frame[i];
+  ++eden_heap_trace_calls;
+  unsigned at = (unsigned)(((caller * 0x9E3779B97F4A7C15ull) ^ (above * 0xC2B2AE3D27D4EB4Full)) >> 40) %
+                EDEN_HEAP_TRACE_SITES;
+  for (unsigned tries = 0; tries < 32; ++tries, at = (at + 1) % EDEN_HEAP_TRACE_SITES) {
+    if (eden_heap_trace[at].count == 0) {
+      eden_heap_trace[at].caller = caller;
+      eden_heap_trace[at].above = above;
+    }
+    if (eden_heap_trace[at].caller == caller && eden_heap_trace[at].above == above) {
+      eden_heap_trace[at].count++;
+      eden_heap_trace[at].bytes += bytes;
+      return;
+    }
+  }
+  ++eden_heap_trace_lost;
+}
+#define EDEN_HEAP_TRACE(bytes)                                                                    \
+  do {                                                                                            \
+    if (__builtin_expect(atomic_load_explicit(&eden_heap_trace_on, memory_order_relaxed), 0))     \
+      eden_heap_trace_note((uintptr_t)__builtin_return_address(0),                                \
+                           (const uintptr_t *)__builtin_frame_address(0), bytes);                 \
+  } while (0)
+
+/* The sites with at least one call in 4,000, over the frames the trace was on for. */
+void eden_heap_trace_print(unsigned long frames) {
+  printf("EDEN_HEAP_TRACE calls=%lu lost=%lu frames=%lu\n", eden_heap_trace_calls, eden_heap_trace_lost, frames);
+  for (unsigned i = 0; i < EDEN_HEAP_TRACE_SITES; ++i)
+    if (eden_heap_trace[i].count != 0 && eden_heap_trace[i].count * 4000 >= eden_heap_trace_calls)
+      printf("EDEN_HEAP_SITE caller=%lx above=%lx count=%lu bytes=%lu\n", (unsigned long)eden_heap_trace[i].caller,
+             (unsigned long)eden_heap_trace[i].above, eden_heap_trace[i].count, eden_heap_trace[i].bytes);
+}
+#else
+#define EDEN_HEAP_TRACE(bytes) ((void)0)
+#endif
+
 static void eden_heap_charge(struct eden_heap_thread *self, long bytes, long blocks) {
   self->live += bytes;
   self->blocks += blocks;
@@ -552,6 +614,7 @@ static void *eden_heap_allocate(size_t count, size_t size, int zero) {
 void *__wrap_malloc(size_t size) {
   if (!ps5_heap_ready())
     return __real_malloc(size);
+  EDEN_HEAP_TRACE(size);
   void *cached = eden_tcache_take(size);
   return cached != NULL ? cached : eden_heap_record(eden_heap_allocate(1, size, 0), size != 0);
 }
@@ -559,6 +622,7 @@ void *__wrap_malloc(size_t size) {
 void *__wrap_calloc(size_t count, size_t size) {
   if (!ps5_heap_ready())
     return __real_calloc(count, size);
+  EDEN_HEAP_TRACE(count * size);
   if (size != 0 && count > (size_t)-1 / size) {
     atomic_fetch_add_explicit(&ps5_heap_failures, 1, memory_order_relaxed);
     return NULL;
@@ -573,6 +637,7 @@ void *__wrap_calloc(size_t count, size_t size) {
 void *__wrap_realloc(void *address, size_t size) {
   if (address == NULL)
     return __wrap_malloc(size);
+  EDEN_HEAP_TRACE(size);
   const int in_range = eden_heap_in_range(address);
   const int large = in_range ? -1 : eden_heap_large_find(address);
   if (!in_range && large < 0)
@@ -637,6 +702,7 @@ void __wrap_free(void *address) {
 int __wrap_posix_memalign(void **address, size_t alignment, size_t size) {
   if (!ps5_heap_ready())
     return __real_posix_memalign(address, alignment, size);
+  EDEN_HEAP_TRACE(size);
   /* An alignment no space accepts must not make the heap grow looking for one that does. */
   if (alignment < sizeof(void *) || (alignment & (alignment - 1)) != 0)
     return EINVAL;

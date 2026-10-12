@@ -104,6 +104,18 @@ inline Totals bind_tbo, bind_update, bind_geometry;
 inline Totals geo_index, geo_vertex, geo_xf, geo_indirect;
 inline Totals upd_state, upd_stage, upd_indirect;
 inline Totals gpu_queue_wait, gpu_dispatch;
+// The Vulkan worker thread at work: it makes the driver's calls the GPU thread recorded, and
+// the submissions. One timer a chunk of recorded calls.
+inline Totals worker_execute;
+// Who asks the Vulkan scheduler to submit (Scheduler::Flush and Finish), by the caller's
+// address: a submission costs the worker thread a quarter of a millisecond in the driver, and
+// the GPU thread sets all its state again after one. Counted while timers are on.
+struct FlushSite {
+    std::atomic<std::uintptr_t> caller{0};
+    std::atomic<unsigned long long> calls{0};
+};
+inline std::array<FlushSite, 24> flush_sites;
+void NoteFlush(void* caller);
 // The three phases of the dispatch (Tegra::Control::Scheduler::Push), measured inside it: taking
 // the channel lock and binding it, queueing the submit list, and then executing the guest's
 // methods - the O(draws) part. gpu_dispatch is their sum plus the loop's own overhead, so these
