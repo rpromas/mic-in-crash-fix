@@ -800,6 +800,16 @@ int main(int argc, char** argv) {
                     Eden::Performance::frame_trace = true;
                 } else if (entry == "pipeline=on") {
                     Eden::Performance::pipelined_frames = true;
+                } else if (entry.starts_with("gpu_delay_ms=") || entry.starts_with("gpu_delay_step_ms=")) {
+                    // The GPU thread waits before each command list of the game: a fixed time, and
+                    // a step more for every 600 frames shown (headless/performance.h).
+                    const bool step = entry.starts_with("gpu_delay_step_ms=");
+                    const double ms = std::atof(entry.c_str() + (step ? 18 : 13));
+                    if (ms >= 0 && ms <= 100)
+                        (step ? Eden::Performance::gpu_delay_step_us : Eden::Performance::gpu_delay_us) =
+                            static_cast<unsigned>(ms * 1000);
+                } else if (entry == "gpu_delay_after=on") {
+                    Eden::Performance::gpu_delay_after = true;
                 } else if (entry == "timers=off") {
                     // The timers the development reports read are off, as in a release build:
                     // the frame rate and pacing lines stay (EDEN_VULKAN_FRAME, _INTERVALS).

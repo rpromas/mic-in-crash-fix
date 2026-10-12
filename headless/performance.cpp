@@ -526,6 +526,13 @@ void ReportSessionMemory(const char* phase, unsigned session) {
     std::fflush(stdout);
 }
 
+void DevDelay(bool after) {
+    if (after != gpu_delay_after.load(std::memory_order_relaxed)) return;
+    const unsigned delay = gpu_delay_us.load(std::memory_order_relaxed) +
+        gpu_delay_step_us.load(std::memory_order_relaxed) * (frames_shown.load(std::memory_order_relaxed) / 600);
+    if (delay) std::this_thread::sleep_for(std::chrono::microseconds(delay));
+}
+
 void NoteFlush(void* caller) {
     if (!timers_on.load(std::memory_order_relaxed)) return;
     const auto address = reinterpret_cast<std::uintptr_t>(caller);
@@ -540,6 +547,12 @@ void NoteFlush(void* caller) {
 
 void ReportGpuThread(unsigned frame) {
     {
+        if (gpu_delay_us.load(std::memory_order_relaxed) || gpu_delay_step_us.load(std::memory_order_relaxed))
+            std::printf("EDEN_DEV_DELAY us=%u after=%d\n",
+                        gpu_delay_us.load(std::memory_order_relaxed) +
+                            gpu_delay_step_us.load(std::memory_order_relaxed) *
+                                (frames_shown.load(std::memory_order_relaxed) / 600),
+                        static_cast<int>(gpu_delay_after.load(std::memory_order_relaxed)));
         std::printf("EDEN_DEV_WORKER execute_calls=%llu execute_ns=%llu\n",
                     worker_execute.calls.load(std::memory_order_relaxed),
                     worker_execute.nanoseconds.load(std::memory_order_relaxed));

@@ -2079,7 +2079,7 @@ if(EDEN_PS5_OPENGL)
                 "            { ::Eden::Performance::Timer idle_timer(::Eden::Performance::gpu_queue_wait);\n            ::Eden::Performance::gpu_thread_idle.store(true, std::memory_order_relaxed);\n${hud_wait}\n            ::Eden::Performance::gpu_thread_idle.store(false, std::memory_order_relaxed);\n            }"
                 gpu_worker "${gpu_worker}")
             string(REPLACE "${dispatch_call}"
-                "                { ::Eden::Performance::Timer dispatch_timer(::Eden::Performance::gpu_dispatch);\n                ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvDispatchBegin);\n${dispatch_call}\n                ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvDispatchEnd);\n                }"
+                "                { ::Eden::Performance::Timer dispatch_timer(::Eden::Performance::gpu_dispatch);\n                ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvDispatchBegin);\n                ::Eden::Performance::DevDelay(false);\n${dispatch_call}\n                ::Eden::Performance::DevDelay(true);\n                ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvDispatchEnd);\n                }"
                 gpu_worker "${gpu_worker}")
             string(REPLACE "if (count <= 3) LOG_INFO(Render_OpenGL, \"EDEN_GPU_DISPATCH_"
                 "if (count <= 3 || ::Eden::Performance::BootTrace()) LOG_INFO(Render_OpenGL, \"EDEN_GPU_DISPATCH_"

@@ -104,6 +104,13 @@ inline Totals bind_tbo, bind_update, bind_geometry;
 inline Totals geo_index, geo_vertex, geo_xf, geo_indirect;
 inline Totals upd_state, upd_stage, upd_indirect;
 inline Totals gpu_queue_wait, gpu_dispatch;
+// Development: the GPU thread waits before each command list of the game (or after it), a fixed
+// time plus a step for every 600 frames shown: at what GPU thread time a game that paces
+// itself goes from two display refreshes a frame to three, and whether what it measures ends
+// inside the list. dev-settings gpu_delay_ms=N, gpu_delay_step_ms=N, gpu_delay_after=on.
+inline std::atomic<unsigned> gpu_delay_us{0}, gpu_delay_step_us{0};
+inline std::atomic<bool> gpu_delay_after{false};
+void DevDelay(bool after);
 // The Vulkan worker thread at work: it makes the driver's calls the GPU thread recorded, and
 // the submissions. One timer a chunk of recorded calls.
 inline Totals worker_execute;
