@@ -64,6 +64,8 @@ void BeginStallSampling();
 // game shows frames (they are core 3 in the lines): where that thread's time goes. Call before
 // BeginStallSampling.
 void BeginGpuProfile();
+// The GPU thread is waiting for work (set around its wait in development builds): no sample then.
+inline std::atomic<bool> gpu_thread_idle{false};
 void EndStallWindow();      // the game is stopping: no more signals to its threads
 void ReportStallSamples();  // prints what was sampled since the last call
 inline std::atomic<long long> last_frame_ns{0};

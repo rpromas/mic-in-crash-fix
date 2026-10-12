@@ -2060,7 +2060,7 @@ if(EDEN_PS5_OPENGL)
         if(EDEN_DEV_PROFILE)
             string(PREPEND gpu_worker "#include \"${EDEN_PORT_DIR}/performance.h\"\n")
             string(REPLACE "${hud_wait}"
-                "            { ::Eden::Performance::Timer idle_timer(::Eden::Performance::gpu_queue_wait);\n${hud_wait}\n            }"
+                "            { ::Eden::Performance::Timer idle_timer(::Eden::Performance::gpu_queue_wait);\n            ::Eden::Performance::gpu_thread_idle.store(true, std::memory_order_relaxed);\n${hud_wait}\n            ::Eden::Performance::gpu_thread_idle.store(false, std::memory_order_relaxed);\n            }"
                 gpu_worker "${gpu_worker}")
             string(REPLACE "${dispatch_call}"
                 "                { ::Eden::Performance::Timer dispatch_timer(::Eden::Performance::gpu_dispatch);\n                ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvDispatchBegin);\n${dispatch_call}\n                ::Eden::Performance::NoteFrameEvent(::Eden::Performance::kEvDispatchEnd);\n                }"

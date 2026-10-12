@@ -520,7 +520,6 @@ void ReportSessionMemory(const char* phase, unsigned session) {
 }
 
 void ReportGpuThread(unsigned frame) {
-    ReportStallSamples();  // the GPU thread's profile, when it is taken
     if (frame_trace.load(std::memory_order_relaxed)) {
         static constexpr const char* names[]{"vsync", "buffer_back", "frame_taken", "composite_asked",
             "game_waits_buffer", "game_has_buffer", "game_hands_frame", "game_pushes", "gpu_push_begin",
@@ -1082,7 +1081,8 @@ void BeginStallSampling() {
             const long long gap = NowNs() - last;
             if (gap > 1'500'000'000) continue;
             // The GPU thread's profile: every tick while frames come.
-            if (gpu_profile.load(std::memory_order_relaxed) && stall_ready[3].load(std::memory_order_acquire))
+            if (gpu_profile.load(std::memory_order_relaxed) && stall_ready[3].load(std::memory_order_acquire) &&
+                !gpu_thread_idle.load(std::memory_order_relaxed))
                 pthread_kill(stall_threads[3], SIGUSR2);
             // The guest cores: every other tick, and only while a frame is overdue.
             if (gap < 120'000'000 || (tick & 1)) continue;
@@ -1094,13 +1094,20 @@ void BeginStallSampling() {
 
 void BeginGpuProfile() { gpu_profile.store(true, std::memory_order_release); }
 
+static void PrintStallSamples();
 void EndStallWindow() {
     for (auto& ready : stall_ready) ready.store(false, std::memory_order_release);
+    if (gpu_profile.load(std::memory_order_relaxed)) PrintStallSamples();  // the whole profile, now
     frames_shown.store(0, std::memory_order_relaxed);
     last_frame_ns.store(0, std::memory_order_relaxed);
 }
 
 void ReportStallSamples() {
+    // A profile of the GPU thread is printed when the game ends: printing is work of this thread.
+    if (!gpu_profile.load(std::memory_order_relaxed)) PrintStallSamples();
+}
+
+static void PrintStallSamples() {
     const unsigned end = std::min<unsigned>(stall_count.load(std::memory_order_acquire),
                                             static_cast<unsigned>(stall_samples.size()));
     while (stall_reported < end && stall_samples[stall_reported].done.load(std::memory_order_acquire)) {
