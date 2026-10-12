@@ -1065,6 +1065,7 @@ extern "C" void eden_jit_block(unsigned core, unsigned long long location, const
 }
 
 #ifdef PS5_NATIVE
+static void PrintStallSamples();
 void BeginStallSampling() {
     for (auto& ends : stall_pipes)
         if (pipe(ends.data())) throw std::runtime_error("Cannot open the development stall sampler's pipes");
@@ -1076,10 +1077,15 @@ void BeginStallSampling() {
         for (unsigned tick = 0;; ++tick) {
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
             const long long last = last_frame_ns.load(std::memory_order_relaxed);
+            // After a game (EndStallWindow): what is left of the profile.
+            if (last == 0 && gpu_profile.load(std::memory_order_relaxed)) PrintStallSamples();
             if (last == 0 || frames_shown.load(std::memory_order_relaxed) < 900) continue;
-            if (stall_count.load(std::memory_order_relaxed) >= stall_samples.size()) continue;
             const long long gap = NowNs() - last;
-            if (gap > 1'500'000'000) continue;
+            const bool full = stall_count.load(std::memory_order_relaxed) >= stall_samples.size();
+            // The profile is printed from here, not from the thread it is of: when frames stop
+            // coming (the game ended or is loading) or the buffer is full.
+            if (gpu_profile.load(std::memory_order_relaxed) && (full || gap > 1'500'000'000)) PrintStallSamples();
+            if (full || gap > 1'500'000'000) continue;
             // The GPU thread's profile: every tick while frames come.
             if (gpu_profile.load(std::memory_order_relaxed) && stall_ready[3].load(std::memory_order_acquire) &&
                 !gpu_thread_idle.load(std::memory_order_relaxed))
@@ -1094,10 +1100,8 @@ void BeginStallSampling() {
 
 void BeginGpuProfile() { gpu_profile.store(true, std::memory_order_release); }
 
-static void PrintStallSamples();
 void EndStallWindow() {
     for (auto& ready : stall_ready) ready.store(false, std::memory_order_release);
-    if (gpu_profile.load(std::memory_order_relaxed)) PrintStallSamples();  // the whole profile, now
     frames_shown.store(0, std::memory_order_relaxed);
     last_frame_ns.store(0, std::memory_order_relaxed);
 }
