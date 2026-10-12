@@ -34,6 +34,7 @@
 
 // dynarmic A64 dispatch-path counters (headless/dynarmic/jit_group_support.inc).
 extern "C" void eden_jit_path_counters(unsigned core, unsigned long long* out) __attribute__((weak));
+extern "C" unsigned eden_jit_space_left(unsigned long long* out, unsigned capacity) __attribute__((weak));
 namespace Common {
 // Address space Eden's sparse tables span and the memory they hold (src/memory_pages.cpp).
 void SparseUsage(std::size_t* reserved, std::size_t* committed) noexcept;
@@ -1163,6 +1164,17 @@ void Snapshot() {
                         dups[2].load(std::memory_order_relaxed), dups[3].load(std::memory_order_relaxed),
                         dups[4].load(std::memory_order_relaxed), dups[5].load(std::memory_order_relaxed),
                         dups[6].load(std::memory_order_relaxed), dups[7].load(std::memory_order_relaxed));
+            if (i == 0 && eden_jit_space_left) {
+                // Room left in each JIT code region (bytes), in the order the regions were made.
+                unsigned long long left[16]{};
+                const unsigned regions = eden_jit_space_left(left, 16);
+                char line[420];
+                int length = std::snprintf(line, sizeof(line), "EDEN_JIT_SPACE left=");
+                for (unsigned region = 0; region < regions && length > 0 && length < 380; ++region)
+                    length += std::snprintf(line + length, sizeof(line) - static_cast<std::size_t>(length), "%s%llu",
+                                            region ? "," : "", left[region]);
+                std::puts(line);
+            }
             if (eden_jit_path_counters) {
                 unsigned long long path[8]{};
                 eden_jit_path_counters(i, path);

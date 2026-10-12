@@ -143,6 +143,26 @@ extern "C" void eden_jit_path_counters(unsigned core, unsigned long long* out) {
     out[EdenPathCount] = JitGroup::far_links.load(std::memory_order_relaxed);
 }
 
+// Room left in every code region that is alive, in the order the regions joined (development
+// report: what a session has used of the code caches, which are taken whole). Each value is
+// the region's own hint, as of its last compilation.
+extern "C" unsigned eden_jit_space_left(unsigned long long* out, unsigned capacity) {
+    unsigned count = 0;
+    std::lock_guard lock{eden_groups_mutex};
+    for (const auto& weak : eden_groups) {
+        const auto group = weak.lock();
+        if (!group)
+            continue;
+        std::lock_guard members{group->mutex};
+        if (!group->space)
+            continue;
+        for (void* member : group->members)
+            if (count < capacity)
+                out[count++] = group->space(member);
+    }
+    return count;
+}
+
 namespace {
 // Registers the JIT object and callbacks before the prelude is generated, so that its dispatcher
 // and callback calls load the running core's own from the JIT state (callback.cpp).
