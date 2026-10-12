@@ -578,11 +578,16 @@ void ReportGpuThread(unsigned frame) {
         static std::array<FrameEvent, 2048> copy;
         copy = frame_events;
         std::sort(copy.begin(), copy.end(), [](const FrameEvent& a, const FrameEvent& b) { return a.ns < b.ns; });
-        const long long from = NowNs() - 400'000'000;
+        // Every event since the last report (the buffer holds about seven seconds of a game at
+        // 20 frames a second), with times from one origin so reports line up.
+        static long long reported_to = 0;
+        static const long long origin = NowNs();
         for (const FrameEvent& event : copy)
-            if (event.ns >= from && event.kind < kEvCount)
-                std::printf("EDEN_FRAME_EVENT ms=%.2f %s %llu\n", static_cast<double>(event.ns - from) / 1e6,
+            if (event.ns > reported_to && event.kind < kEvCount) {
+                std::printf("EDEN_FRAME_EVENT ms=%.2f %s %llu\n", static_cast<double>(event.ns - origin) / 1e6,
                             names[event.kind], event.value);
+                reported_to = event.ns;
+            }
     }
     // Heap growth and arena use over the run (allocation failures abort the title).
     ps5_opengl_heap_snapshot("vulkan_report", frame);
